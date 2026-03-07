@@ -1,7 +1,9 @@
+import 'dotenv/config'
 import { Worker } from 'bullmq';
-import { OpenAIEmbeddings } from '@langchain/openai';
+import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
 import { QdrantVectorStore } from '@langchain/qdrant';
 import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
+import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 
 const worker = new Worker(
   'file-upload-queue',
@@ -16,30 +18,35 @@ const worker = new Worker(
 
       const loader = new PDFLoader(data.path);
       const docs = await loader.load();
-      console.log(`Loaded ${docs.length} docs from PDF`);
+      const splitter = new RecursiveCharacterTextSplitter({
+        chunkSize: 1000,
+        chunkOverlap: 200,
+      });
+      const splitDocs = await splitter.splitDocuments(docs);
+      console.log(`Split into ${splitDocs.length} chunks`);
 
-      const embeddings = new OpenAIEmbeddings({
-        model: 'text-embedding-3-small',
-        apiKey: process.env.OPENAI_KEY,
+      const embeddings = new GoogleGenerativeAIEmbeddings({
+        model: 'gemini-embedding-001',
+        apiKey: process.env.GOOGLE_API_KEY,
       });
 
       const vectorStore = await QdrantVectorStore.fromDocuments(
-        docs,
+        splitDocs,
         embeddings,
         {
-          url: 'http://localhost:6333',
-          collectionName: 'langchainjs-testing',
+          url: process.env.QDRANT_URL,
+          apiKey: process.env.QDRANT_API_KEY,
+          collectionName: 'pdf-chat-collection',
         }
       );
-      await vectorStore.addDocuments(docs);
 
-      console.log('All Docs are added to vector store ');
+      console.log('All chunks are added to vector store ');
     } catch (err) {
       console.error('Worker job failed:', err);
       throw err;
     }
   },
-  { connection: { host: 'localhost', port: 6379 } }
+  { connection: { host: '127.0.0.1', port: 6379 } }
 );
 
 worker.on('failed', (job, err) => {

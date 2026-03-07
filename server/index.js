@@ -1,17 +1,19 @@
+import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
 import { Queue } from 'bullmq'
-import { OpenAIEmbeddings } from '@langchain/openai';
+import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
 import { QdrantVectorStore } from '@langchain/qdrant';
-import OpenAI from 'openai'
+import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_KEY,
+const client = new ChatGoogleGenerativeAI({
+  model: "gemini-flash-latest",
+  apiKey: process.env.GOOGLE_API_KEY,
 });
 const queue = new Queue('file-upload-queue', {
   connection: {
-    host: 'localhost',
+    host: '127.0.0.1',
     port: '6379',
   }
 })
@@ -38,41 +40,57 @@ app.get('/', (req, res) => {
 })
 
 app.get('/chat', async (req, res) => {
-  const userQuery = req.query.message;
-  const embeddings = new OpenAIEmbeddings({
-    model: 'text-embedding-3-small',
-    apiKey: process.env.OPENAI_KEY,
-  });
+  try {
+    const userQuery = req.query.message;
+    if (!userQuery) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
 
-  const vectorStore = await QdrantVectorStore.fromDocuments(
-    // docs,
-    embeddings,
-    {
-      url: 'http://localhost:6333',
-      collectionName: 'langchainjs-testing',
+    const embeddings = new GoogleGenerativeAIEmbeddings({
+      model: 'gemini-embedding-001',
+      apiKey: process.env.GOOGLE_API_KEY,
     });
-  const ret = vectorStore.asRetriever({
-    k: 2,
-  });
-  const result = await ret.invoke(userQuery);
 
-  const SYSTEM_PROMPT = `You are a helpful AI Assitsant who answers the query based on uploaded pdf
+    let vectorStore;
+    try {
+      vectorStore = await QdrantVectorStore.fromExistingCollection(
+        embeddings,
+        {
+          url: process.env.QDRANT_URL,
+          apiKey: process.env.QDRANT_API_KEY,
+          collectionName: 'pdf-chat-collection',
+        });
+    } catch (e) {
+      console.error('Vector store collection not found or connection failed:', e.message);
+      return res.status(404).json({
+        message: "I don't have enough context yet. Please upload a PDF first and wait for it to be processed.",
+        docs: []
+      });
+    }
+
+    const result = await vectorStore.similaritySearch(userQuery, 5);
+
+    const SYSTEM_PROMPT = `You are a helpful AI Assistant who answers the query based on uploaded pdf context ONLY. If the answer is not in the context, say you don't know based on the document.
         Context:
-        ${JSON.stringify(result)}
+        ${result.map(d => d.pageContent).join('\n\n')}
         `;
 
-  const chatResult = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
+    const chatResult = await client.invoke([
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userQuery },
-    ],
-  })
+    ])
 
-  return res.json({ message: chatResult.choices[0].message.content, docs: result })
+    return res.json({ message: chatResult.content, docs: result })
+  } catch (error) {
+    console.error('Chat error:', error);
+    return res.status(500).json({ error: 'An internal error occurred while processing your request.' });
+  }
 })
 
 app.post('/upload/pdf', upload.single('pdf'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
   queue.add('file-ready',
     JSON.stringify({
       filename: req.file.originalname,
