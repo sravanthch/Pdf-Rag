@@ -1,9 +1,9 @@
 import 'dotenv/config'
 import { Worker } from 'bullmq';
-import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
-import { QdrantVectorStore } from '@langchain/qdrant';
 import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
+import { redisConfig, getEmbeddings, qdrantConfig } from './config.js';
+import { QdrantVectorStore } from '@langchain/qdrant';
 
 const worker = new Worker(
   'file-upload-queue',
@@ -25,19 +25,12 @@ const worker = new Worker(
       const splitDocs = await splitter.splitDocuments(docs);
       console.log(`Split into ${splitDocs.length} chunks`);
 
-      const embeddings = new GoogleGenerativeAIEmbeddings({
-        model: 'gemini-embedding-001',
-        apiKey: process.env.GOOGLE_API_KEY,
-      });
+      const embeddings = getEmbeddings();
 
       const vectorStore = await QdrantVectorStore.fromDocuments(
         splitDocs,
         embeddings,
-        {
-          url: process.env.QDRANT_URL,
-          apiKey: process.env.QDRANT_API_KEY,
-          collectionName: 'pdf-chat-collection',
-        }
+        qdrantConfig
       );
 
       console.log('All chunks are added to vector store ');
@@ -46,7 +39,7 @@ const worker = new Worker(
       throw err;
     }
   },
-  { connection: { host: '127.0.0.1', port: 6379 } }
+  { connection: redisConfig }
 );
 
 worker.on('failed', (job, err) => {

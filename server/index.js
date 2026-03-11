@@ -3,8 +3,7 @@ import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
 import { Queue } from 'bullmq'
-import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
-import { QdrantVectorStore } from '@langchain/qdrant';
+import { redisConfig, getEmbeddings, qdrantConfig } from './config.js'
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 
 const client = new ChatGoogleGenerativeAI({
@@ -12,10 +11,7 @@ const client = new ChatGoogleGenerativeAI({
   apiKey: process.env.GOOGLE_API_KEY,
 });
 const queue = new Queue('file-upload-queue', {
-  connection: {
-    host: '127.0.0.1',
-    port: '6379',
-  }
+  connection: redisConfig
 })
 
 
@@ -46,20 +42,14 @@ app.get('/chat', async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    const embeddings = new GoogleGenerativeAIEmbeddings({
-      model: 'gemini-embedding-001',
-      apiKey: process.env.GOOGLE_API_KEY,
-    });
+    const embeddings = getEmbeddings();
 
     let vectorStore;
     try {
       vectorStore = await QdrantVectorStore.fromExistingCollection(
         embeddings,
-        {
-          url: process.env.QDRANT_URL,
-          apiKey: process.env.QDRANT_API_KEY,
-          collectionName: 'pdf-chat-collection',
-        });
+        qdrantConfig
+      );
     } catch (e) {
       console.error('Vector store collection not found or connection failed:', e.message);
       return res.status(404).json({
