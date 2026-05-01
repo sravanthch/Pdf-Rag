@@ -12,11 +12,14 @@ const worker = new Worker(
       console.log('Job received:', job.data);
 
       const data = JSON.parse(job.data);
-      if (!data.path) {
-        throw new Error('Missing PDF path in job data');
+      if (!data.buffer) {
+        throw new Error('Missing PDF buffer in job data');
       }
 
-      const loader = new PDFLoader(data.path);
+      const buffer = Buffer.from(data.buffer, 'base64');
+      const blob = new Blob([buffer], { type: data.mimetype || 'application/pdf' });
+
+      const loader = new PDFLoader(blob);
       const docs = await loader.load();
       const splitter = new RecursiveCharacterTextSplitter({
         chunkSize: 1000,

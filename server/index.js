@@ -15,17 +15,7 @@ const queue = new Queue('file-upload-queue', {
 })
 
 
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/')
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
-    cb(null, `${uniqueSuffix}-${file.originalname}`)
-  }
-})
-
-
+const storage = multer.memoryStorage()
 const upload = multer({ storage: storage })
 
 const app = express()
@@ -84,8 +74,8 @@ app.post('/upload/pdf', upload.single('pdf'), (req, res) => {
   queue.add('file-ready',
     JSON.stringify({
       filename: req.file.originalname,
-      destination: req.file.destination,
-      path: req.file.path,
+      buffer: req.file.buffer.toString('base64'),
+      mimetype: req.file.mimetype,
     }))
   return res.json({ message: 'uploaded' })
 })
